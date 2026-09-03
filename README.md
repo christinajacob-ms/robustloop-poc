@@ -21,3 +21,5 @@ It simulates a robot driving toward an obstacle. A fault injector intercepts the
 # Safety Assertion Example
 if true_dist <= brake_threshold_m and sensor_dist > brake_threshold_m:
     status = "FAIL: Collision imminent, sensor missed ground truth"
+
+Updated to V3: Now supports Industrial-Grade faults including Jitter, Clock-Drift, Packet Loss, and Transient Outliers based on feedback from industry partners.
