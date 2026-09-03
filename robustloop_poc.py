@@ -51,12 +51,12 @@ class IndustrialFaultInjector:
 
             elif self.fault_type == "dropout":
                 # Paketverlust: Nachricht wird einfach nicht gesendet (Simuliert QoS-Loss)
-                if random.random() < 0.3: # 30% Verlustwahrscheinlichkeit
+                if random.random() < 0.4: # 40% Verlustwahrscheinlichkeit für deutliche Lücken
                     return None 
 
             elif self.fault_type == "outlier":
-                # Transiente statistische Ausreißer (z.B. Reflexionen an glänzenden Objekten)
-                if random.random() < 0.1: # 10% Chance für einen Spike
+                # Transiente statistische Ausreißer (z.B. Reflexionen)
+                if random.random() < 0.15: # 15% Chance für einen Spike
                     ros_msg["range"] = round(random.uniform(0.1, 5.0), 3)
 
         else:
@@ -70,24 +70,26 @@ def run_simulation(fault_type):
     injector = IndustrialFaultInjector(fault_type=fault_type)
     
     current_ms = 0
-    robot_speed_ms = 0.2 # 0.2 m/s Richtung Wand
+    # GESCHWINDIGKEIT ERHÖHT: 0.4 m/s, damit der Roboter die 0.5m Marke erreicht
+    robot_speed_ms = 0.4 
     
     # Safety Assertion: Wenn wir näher als 0.5m dran sind, aber der Sensor > 0.5m meldet -> FAIL
     brake_threshold_m = 0.5
     
     while current_ms <= 5000:
         t_sec = current_ms / 1000.0
+        # Roboter startet bei 2.0m und fährt linear auf 0.0m zu
         true_dist = max(0.0, 2.0 - (robot_speed_ms * t_sec))
         
         msg = injector.process(true_dist, current_ms)
         
-        # Handle Dropout (Keine Nachricht empfangen)
         if msg is None:
-            sensor_val = None # Lücke in den Daten
+            sensor_val = None # Lücke in den Daten (Dropout)
             status = "WARNING: Packet Loss" if true_dist < brake_threshold_m else "RUNNING"
         else:
             sensor_val = msg["range"]
             status = "RUNNING"
+            # FAIL: Ground Truth ist kritisch, aber Sensor meldet "sichere" Distanz
             if true_dist <= brake_threshold_m and sensor_val > brake_threshold_m:
                 status = "FAIL: Safety Violation (Sensor blindness)"
 
@@ -103,6 +105,7 @@ def run_simulation(fault_type):
 def generate_report(timestamps, truth, sensor, statuses, fault_type):
     # Finde den ersten Fail-Punkt
     fail_index = next((i for i, s in enumerate(statuses) if "FAIL" in s), None)
+    incident_time = round(fail_index * 0.05, 2) if fail_index else 'N/A'
     
     data_json = json.dumps({
         "labels": timestamps,
@@ -120,7 +123,7 @@ def generate_report(timestamps, truth, sensor, statuses, fault_type):
                 "borderColor": "rgba(255, 99, 132, 1)",
                 "borderWidth": 3,
                 "fill": False,
-                "spanGaps": False # Wichtig, um Dropouts als Lücken zu zeigen!
+                "spanGaps": False # Wichtig: Zeigt Lücken bei Dropouts!
             }
         ]
     })
@@ -138,7 +141,6 @@ def generate_report(timestamps, truth, sensor, statuses, fault_type):
             h1 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
             .meta-box {{ background: #f8f9fa; padding: 20px; border-radius: 8px; border-left: 5px solid #3498db; margin-bottom: 20px; }}
             .fail {{ color: #e74c3c; font-weight: bold; }}
-            .pass {{ color: #27ae60; font-weight: bold; }}
             .tag {{ background: #3498db; color: white; padding: 3px 8px; border-radius: 4px; font-size: 12px; }}
         </style>
     </head>
@@ -147,13 +149,13 @@ def generate_report(timestamps, truth, sensor, statuses, fault_type):
             <h1>RobustLoop Reliability Report <span style="font-size: 18px; color: #7f8c8d;">V3 (Industrial)</span></h1>
             <div class="meta-box">
                 <p><strong style="color:#2c3e50">Test-ID:</strong> RL-IND-003 | <strong style="color:#2c3e50">Fault Type:</strong> <span class="tag">{fault_type.upper()}</span></p>
-                <p><strong style="color:#2c3e50">Safety Assertion:</strong> <code>distance < 0.5m AND sensor > 0.5m</code></p>
+                <p><strong style="color:#2c3e50">Safety Assertion:</strong> <code style="background:#eee; padding:2px 5px;">distance < 0.5m AND sensor > 0.5m</code></p>
                 <p><strong style="color:#2c3e50">Result:</strong> <span class="fail">FAIL</span> - Robot failed to detect critical proximity due to semantic fault.</p>
-                <p><strong style="color:#2c3e50">Incident Time:</strong> {fail_index * 0.05 if fail_index else 'N/A'}s</p>
+                <p><strong style="color:#2c3e50">Incident Time:</strong> {incident_time}s</p>
             </div>
             <canvas id="faultChart" width="800" height="400"></canvas>
             <div style="margin-top: 20px; font-size: 13px; color: #666; line-height: 1.6;">
-                <strong>Technical Analysis:</strong><br>
+                <strong style="color:#2c3e50">Technical Analysis:</strong><br>
                 This test simulates real-world failures described by industrial partners (Fraunhofer IPA / Olive Robotics). 
                 The <b>Ground Truth</b> represents the physical reality, while the <b>Sensor Output</b> represents the data stream entering the ROS2 navigation stack. 
                 The FAIL occurs because the software trusts the plausible but incorrect sensor value, bypassing the safety buffer.
@@ -191,19 +193,25 @@ if __name__ == "__main__":
     print("="*60)
     
     faults = ["freeze", "jitter", "clock_drift", "dropout", "outlier"]
+    generated_files = []
     
     for f in faults:
         print(f"\n[+] Simulating {f} fault...")
         t, truth, sensor, statuses = run_simulation(f)
         filename = generate_report(t, truth, sensor, statuses, f)
+        generated_files.append(filename)
         print(f"    Report generated: {filename}")
     
     print("\n" + "="*60)
-    print("V3 Industrial Reports complete. Open them in your browser.")
+    print("V3 Industrial Reports complete.")
+    print("The following files are now in your folder:")
+    for file in generated_files:
+        print(f" - {file}")
     print("="*60)
     
     # Open the first one automatically
     try:
-        os.startfile("robustloop_report_freeze.html")
+        os.startfile(generated_files[0])
+        print(f"\nAutomatically opened: {generated_files[0]}")
     except:
         pass
